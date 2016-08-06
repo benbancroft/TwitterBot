@@ -1,0 +1,2 @@
+# TwitterBot
+Twitter competition bot
