@@ -19,6 +19,8 @@ namespace TwitterBot
 
 		public bool Favourite { get; set; }
 
+		public String Text { get; set; }
+
 		public Tweet ()
 		{
 		}

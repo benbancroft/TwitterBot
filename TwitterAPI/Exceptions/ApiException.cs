@@ -12,7 +12,7 @@ namespace TwitterAPI.Exceptions
 
 		public ApiException (ListErrorResponse errorResponse, HttpStatusCode statusCode) : base(errorResponse != null ? errorResponse.ToString() : "Http Error Code: " + statusCode.ToString())
 		{
-			this.ErrorResponse = errorResponse;
+			this.ErrorResponse = errorResponse ?? new ListErrorResponse();
 			this.StatusCode = statusCode;
 		}
 	}

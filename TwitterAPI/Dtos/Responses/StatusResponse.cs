@@ -52,7 +52,7 @@ namespace TwitterAPI.Dtos
 		public ulong CurrentUserRetweet { get; set; }
 		public ulong QuotedStatusID { get; set; }
 		public StatusResponse QuotedStatus { get; set; }
-		public Dictionary<string, string> Scopes { get; set; }
+		public Dictionary<string, object> Scopes { get; set; }
 		public bool WithheldCopyright { get; set; }
 		public List<string> WithheldInCountries { get; set; }
 		public string WithheldScope { get; set; }

@@ -2,7 +2,6 @@
 using System.Linq;
 using System.Configuration;
 using StackExchange.Redis;
-using Newtonsoft.Json.Linq;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Threading;
@@ -22,24 +21,21 @@ namespace TwitterBot
 		private ConnectionMultiplexer redis;
 		private IDatabase db;
 
-		private List<String> followRegexs = new List<String> () { "follow ", "follower ", " follow&" };
-		private List<String> favouriteRegexs = new List<String> () { " fav ", " favorite ", " like ", " favourite " };
-		private List<String> blockRegexs = new List<String> () { "^((?!(retweet)|(rt )|( rt)|(#rt)|(re-tweet)).)*$" };
-		private List<String> blockList = new List<String> () { };
+		private RedisList<String> followRegexs;
+		private RedisList<String> favouriteRegexs;
+		private RedisList<String> blockRegexs;
+		private RedisList<String> blockList;
 
 		private int searchIndex = 0;
-		private List<String> searchKeyWords = new List<String> () { "RT to win", "Retweet and win", "retweet to win" };
+		private RedisList<String> searchKeyWords;
 
 		private readonly object tweetQueueLock = new object ();
 		private DEPQ<Tweet> tweetQueue = new DEPQ<Tweet> ();
 
-		private System.Threading.Timer getTweetsTimer;
-		private System.Threading.Timer followUsersTimer;
-		private System.Threading.Timer favouriteTweetsTimer;
-		private System.Threading.Timer retweetTweetsTimer;
-
 		private long lockCount = 0;
 		private long getThreadCount = 0;
+
+		private Timer getTweetsTimer;
 
 		public TwitterClient ()
 		{
@@ -51,31 +47,52 @@ namespace TwitterBot
 				AccessTokenSecret = ConfigurationManager.AppSettings ["accessTokenSecret"]
 			});
 
-			redis = ConnectionMultiplexer.Connect ("127.0.0.1");
+			redis = ConnectionMultiplexer.Connect (ConfigurationManager.AppSettings ["localRedis"]);
+
+			this.followRegexs = new RedisList<String> (redis, "FollowRegexs");
+			if (this.followRegexs.Count <= 0)
+				this.followRegexs.AddRange (new List<String> () { "follow ", "follower ", " follow&" });
+			this.favouriteRegexs = new RedisList<String> (redis, "FavouriteRegexs");
+			if (this.favouriteRegexs.Count <= 0)
+				this.favouriteRegexs.AddRange (new List<String> () { " fav ", " favorite ", " like ", " favourite " });
+			this.blockRegexs = new RedisList<String> (redis, "BlockRegexs");
+			if (this.blockRegexs.Count <= 0)
+				this.blockRegexs.AddRange (new List<String> () { "^((?!(retweet)|(rt )|( rt)|(#rt)|(re-tweet)).)*$" });
+			this.blockList = new RedisList<String> (redis, "BlockList");
+			if (this.blockList.Count <= 0)
+				this.blockList.AddRange (new List<String> () { });
+			this.searchKeyWords = new RedisList<String> (redis, "SearchKeywords");
+			if (this.searchKeyWords.Count <= 0)
+				this.searchKeyWords.AddRange (new List<String> () { "RT to win", "Retweet and win", "retweet to win" });
 
 			db = redis.GetDatabase ();
 
+
 			//start timers
 
-			getTweetsTimer = new System.Threading.Timer (
+			//getTweetsTimer
+			getTweetsTimer = new Timer (
 				e => GetTweets (),  
 				null, 
 				TimeSpan.Zero, 
 				TimeSpan.FromSeconds (5));
 
-			followUsersTimer = new System.Threading.Timer (
+			//followUsersTimer
+			new System.Threading.Timer (
 				e => followUsers (),  
 				null, 
 				TimeSpan.Zero, 
 				TimeSpan.FromSeconds (5));
 
-			favouriteTweetsTimer = new System.Threading.Timer (
+			//favouriteTweetsTimer
+			new System.Threading.Timer (
 				e => favouriteTweets (),  
 				null, 
 				TimeSpan.Zero, 
 				TimeSpan.FromSeconds (5));
 
-			retweetTweetsTimer = new System.Threading.Timer (
+			//retweetTweetsTimer
+			new System.Threading.Timer (
 				e => retweetTweet (),  
 				null, 
 				TimeSpan.FromSeconds (5), 
@@ -102,11 +119,11 @@ namespace TwitterBot
 
 							db.SortedSetRemove ("following", user.ToString ());
 
-							Console.WriteLine ("Unfollowed {0}", user.ToString ());
+							Logger.LogInfo ("Unfollowed {0}", user.ToString ());
 						}
 
 					} catch (Exception ex) {
-						Console.WriteLine ("Error: " + ex.Message + ", Inner: " + ex.InnerException != null ? ex.InnerException.Message : "");
+						Logger.LogError ("Error: " + ex.Message + ", Inner: " + ex.InnerException != null ? ex.InnerException.Message : "");
 					}
 				} else {
 
@@ -121,13 +138,13 @@ namespace TwitterBot
 								});
 
 								db.SortedSetAdd ("following", user.ToString (), (int)(DateTime.UtcNow.Subtract (new DateTime (1970, 1, 1))).TotalSeconds);
-								Console.WriteLine ("Followed {0}", user.ToString ());
+								Logger.LogInfo ("Followed {0}", user.ToString ());
 
 
 							} catch (ApiException ex) {
 
 								foreach (var error in ex.ErrorResponse.Errors) {
-									Console.WriteLine ("Api Error - " + error.ToString ());
+									Logger.LogInfo ("Api Error - " + error.ToString ());
 
 									//Blocked by user
 									if (error.Code != 162) {
@@ -136,20 +153,22 @@ namespace TwitterBot
 								}
 
 							} catch (Exception ex) {
-								Console.WriteLine ("Error: " + ex.Message);
+								Logger.LogError ("Error: " + ex.Message);
 
 								db.ListRightPush ("follow_requests", user.ToString ());
+
+								throw ex;
 							}
 						} else {
 							db.SortedSetAdd ("following", user.ToString (), (int)(DateTime.UtcNow.Subtract (new DateTime (1970, 1, 1))).TotalSeconds);
-							Console.WriteLine ("Already followed {0}", user.ToString ());
+							Logger.LogInfo ("Already followed {0}", user.ToString ());
 						}
 					}
 				}
 
 			} catch (TimeoutException ex) {
 
-				Console.WriteLine ("Redis operation timed out: {0}", ex.Message);
+				Logger.LogError ("Redis operation timed out: {0}", ex.Message);
 
 			}
 		}
@@ -168,7 +187,7 @@ namespace TwitterBot
 						});
 
 						db.SetAdd ("favourited", tweetId.ToString ());
-						Console.WriteLine ("Favourited {0}", tweetId.ToString ());
+						Logger.LogInfo ("Favourited {0}", tweetId.ToString ());
 
 
 					} catch (ApiException ex) {
@@ -185,15 +204,17 @@ namespace TwitterBot
 						}
 
 					} catch (Exception ex) {
-						Console.WriteLine ("Error: " + ex.Message);
+						Logger.LogError ("Error: " + ex.Message);
 				
 						db.ListRightPush ("favourite_requests", tweetId.ToString ());
+
+						throw ex;
 					}
 				}
 
 			} catch (TimeoutException ex) {
 
-				Console.WriteLine ("Redis operation timed out: {0}", ex.Message);
+				Logger.LogError ("Redis operation timed out: {0}", ex.Message);
 
 			}
 		}
@@ -213,13 +234,16 @@ namespace TwitterBot
 					size = tweetQueue.size ();
 				}
 				Interlocked.Decrement (ref lockCount);
-
-				if (tweet != null)
-					db.SetAdd ("tweets", tweet.Id.ToString ());
 					
 				if (tweet != null) {
 
-					try {
+					db.SetAdd ("tweets", tweet.Id.ToString ());
+
+					using (System.IO.StreamWriter file = new System.IO.StreamWriter (@"tweets.txt", true)) {
+						file.WriteLine (tweet.Text.Replace ("\n", String.Empty).Replace ("\r", String.Empty));
+					}
+
+					//try {
 
 						if (tweet.Follow)
 							db.ListRightPush ("follow_requests", tweet.UserId.ToString ());
@@ -231,19 +255,19 @@ namespace TwitterBot
 							Id = tweet.Id
 						});
 
-						Console.WriteLine (
+						Logger.LogInfo (
 							"Priority: {1}, Follow? {3}, Favourite?: {4}, QueueSize: {5}, URL: https://twitter.com/{2}/status/{0}, LC: {6}", 
 							tweet.Id, tweet.Priority, tweet.UserName, tweet.Follow, tweet.Favourite, size, Interlocked.Read (ref lockCount));
 
-					} catch (Exception ex) {
-						Console.WriteLine ("Error: " + ex.Message);
+					/*} catch (Exception ex) {
+						Logger.LogError ("Error: " + ex.Message);
 						//Console.WriteLine ("Error: " + ex.Message + ", Inner: " + ex.InnerException != null ? ex.InnerException.Message : "");
-					}
+					}*/
 				}
 
 			} catch (TimeoutException ex) {
 
-				Console.WriteLine ("Redis operation timed out: {0}", ex.Message);
+				Logger.LogError ("Redis operation timed out: {0}", ex.Message);
 
 			}
 		}
@@ -255,15 +279,16 @@ namespace TwitterBot
 
 			Interlocked.Increment (ref getThreadCount);
 
-			if (searchKeyWords.Count <= 0)
-				return;
-
-			if (searchKeyWords.Count - 1 < searchIndex)
-				searchIndex = 0;
-
-			var keyword = searchKeyWords [searchIndex++];
-
 			try {
+
+				if (searchKeyWords.Count <= 0)
+					return;
+
+				if (searchKeyWords.Count - 1 < searchIndex)
+					searchIndex = 0;
+
+				var keyword = searchKeyWords [searchIndex++];
+
 				var searchResponse = twitterCtx.request (new SearchTweetsRequest {
 					Query = keyword
 				});
@@ -295,7 +320,8 @@ namespace TwitterBot
 							Id = tweet.Id,
 							UserId = tweet.User.Id,
 							UserName = tweet.User.ScreenName,
-							Tweeted = tweet.CreatedAt
+							Tweeted = tweet.CreatedAt,
+							Text = tweet.Text
 						};
 
 						tweetData.Follow = followRegexs.Any (i => Regex.Matches (tweet.Text.ToLower (), i.ToLower ()).Count > 0);
@@ -309,7 +335,10 @@ namespace TwitterBot
 						Interlocked.Increment (ref lockCount);
 						lock (tweetQueueLock) {
 
-							if (!blockList.Any (i => i.Equals (tweetData.UserName)) && !blockRegexs.Any (i => Regex.Matches (tweet.Text.ToLower (), i.ToLower ()).Count > 0)) {
+							if (blockList.Any (i => i.Equals (tweetData.UserId))) {
+							} else if (blockRegexs.Any (i => Regex.Matches (tweet.Text.ToLower (), i.ToLower ()).Count > 0)) {
+								//Logger.LogInfo("Matched blocked tweet: " + tweetData.Id);
+							} else {
 
 								if (!tweetQueue.Contains (tweetData))
 									tweetQueue.add (tweetData);
@@ -317,16 +346,34 @@ namespace TwitterBot
 									tweetQueue.getLeast ();
 
 							}
-
 						}
 						Interlocked.Decrement (ref lockCount);
 
 					}
 				}
 
-			} catch (Exception ex) {
-				Console.WriteLine ("Error: " + ex.Message + " ExType: " + ex.GetType ().ToString ());
-			}
+			} catch (TimeoutException ex) {
+
+				Logger.LogError ("Redis operation timed out: {0}", ex.Message);
+
+			} catch (ApiException ex) {
+
+				foreach (var error in ex.ErrorResponse.Errors) {
+					//Rate limit
+					if (error.Code == 88) {
+						Logger.LogInfo ("Rate limit exceeded for GetTweets - tailing back");
+						getTweetsTimer.Change (15, 5);
+					} else {
+						Logger.LogError ("Api Error - " + error.ToString ());
+
+						//throw back out
+						throw ex;
+					}
+				}
+
+			} /*catch (Exception ex) {
+				Logger.LogError ("Error: " + ex.Message + " ExType: " + ex.GetType ().ToString ());
+			}*/
 
 			Interlocked.Decrement (ref getThreadCount);
 		}
