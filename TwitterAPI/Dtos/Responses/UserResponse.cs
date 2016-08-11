@@ -50,7 +50,7 @@ namespace TwitterAPI.Dtos
 		public bool Verified { get; set; }
 		public bool ContributorsEnabled { get; set; }
 		public bool IsTranslator { get; set; }
-		public bool Following { get; set; }
+		public bool? Following { get; set; }
 		public StatusResponse Status { get; set; }
 		//public List<Category> Categories { get; set; }
 		public string Lang { get; set; }

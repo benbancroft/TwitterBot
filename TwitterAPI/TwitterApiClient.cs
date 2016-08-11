@@ -264,16 +264,21 @@ namespace TwitterAPI
 			}catch(WebException ex){
 				HttpWebResponse httpResponse = (HttpWebResponse)ex.Response;
 
-				var jsonResponse = string.Empty;
-				using (httpResponse) {
-					using (var reader = new StreamReader (httpResponse.GetResponseStream ())) {
-						jsonResponse = reader.ReadToEnd ();
+				if (httpResponse != null) {
+
+					var jsonResponse = string.Empty;
+					using (httpResponse) {
+						using (var reader = new StreamReader (httpResponse.GetResponseStream ())) {
+							jsonResponse = reader.ReadToEnd ();
+						}
 					}
-				}
 
-				var errors = JsonConvert.DeserializeObject<ListErrorResponse> (jsonResponse, jsonSettings);
+					var errors = JsonConvert.DeserializeObject<ListErrorResponse> (jsonResponse, jsonSettings);
 
-				throw new ApiException(errors, httpResponse.StatusCode);
+					throw new ApiException (errors, httpResponse.StatusCode);
+
+				} else
+					throw ex;
 			}
 		}
 	}

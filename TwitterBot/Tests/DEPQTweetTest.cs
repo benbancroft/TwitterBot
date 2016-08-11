@@ -18,27 +18,27 @@ namespace TwitterBot
 
 			Assert.AreNotEqual (tweetData2, tweetData3);
 
-			Assert.AreEqual (tweetQueue.size (), 0);
+			Assert.AreEqual (tweetQueue.Size (), 0);
 
-			tweetQueue.add (tweetData1);
-			tweetQueue.add (tweetData2);
-			tweetQueue.add (tweetData3);
+			tweetQueue.Add (tweetData1);
+			tweetQueue.Add (tweetData2);
+			tweetQueue.Add (tweetData3);
 
 			Assert.IsTrue (tweetQueue.Contains(tweetData2));
 			Assert.IsFalse (tweetQueue.Contains(tweetData4));
 
-			tweetQueue.add (tweetData4);
+			tweetQueue.Add (tweetData4);
 
 			Assert.IsTrue (tweetQueue.Contains(tweetData4));
 
-			Assert.AreEqual (tweetQueue.size (), 4);
+			Assert.AreEqual (tweetQueue.Size (), 4);
 
-			Assert.AreEqual (tweetQueue.getMost(), tweetData4);
-			Assert.AreEqual (tweetQueue.getMost(), tweetData2);
-			Assert.AreEqual (tweetQueue.getMost(), tweetData1);
-			Assert.AreEqual (tweetQueue.getMost(), tweetData3);
+			Assert.AreEqual (tweetQueue.GetMost(), tweetData4);
+			Assert.AreEqual (tweetQueue.GetMost(), tweetData2);
+			Assert.AreEqual (tweetQueue.GetMost(), tweetData1);
+			Assert.AreEqual (tweetQueue.GetMost(), tweetData3);
 
-			Assert.AreEqual (0, tweetQueue.size ());
+			Assert.AreEqual (0, tweetQueue.Size ());
 		}
 
 		[Test ()]
@@ -51,15 +51,15 @@ namespace TwitterBot
 
 			DEPQ<Tweet> tweetQueue = new DEPQ<Tweet>();
 
-			Assert.AreEqual (0, tweetQueue.size ());
+			Assert.AreEqual (0, tweetQueue.Size ());
 
-			tweetQueue.add (tweetData1);
+			tweetQueue.Add (tweetData1);
 
-			Assert.AreEqual (1, tweetQueue.size ());
+			Assert.AreEqual (1, tweetQueue.Size ());
 
-			if (!tweetQueue.Contains(tweetData2)) tweetQueue.add(tweetData2);
+			if (!tweetQueue.Contains(tweetData2)) tweetQueue.Add(tweetData2);
 
-			Assert.AreEqual (1, tweetQueue.size ());
+			Assert.AreEqual (1, tweetQueue.Size ());
 		}
 	}
 }

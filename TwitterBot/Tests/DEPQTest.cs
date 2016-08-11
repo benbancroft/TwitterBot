@@ -42,10 +42,10 @@ namespace TwitterBot
 
 				string kstr = randomString(smallest.Length);
 				array.Add(kstr);
-				depq.add(kstr);
+				depq.Add(kstr);
 				if (kstr.CompareTo(smallest)<0) smallest = kstr;
 
-				string result = depq.inspectLeast();
+				string result = depq.InspectLeast();
 				Assert.AreEqual(smallest, result);
 
 			}
@@ -57,10 +57,10 @@ namespace TwitterBot
 					string kstr = randomString(smallest.Length);
 
 					array.Add(kstr);
-					depq.add(kstr);
+					depq.Add(kstr);
 					if (kstr.CompareTo(smallest)<0) smallest = kstr;
 				} else {
-					string discarded = depq.getLeast();
+					string discarded = depq.GetLeast();
 					array.Remove(discarded);
 					smallest = array[0];
 					for(int j=1; j<array.Count; j++) {
@@ -68,7 +68,7 @@ namespace TwitterBot
 					}
 				}
 
-				string result = (string)depq.inspectLeast();
+				string result = (string)depq.InspectLeast();
 				Assert.AreEqual(smallest, result);
 			}
 		}
@@ -87,10 +87,10 @@ namespace TwitterBot
 				string kstr = randomString(5);
 
 				array.Add(kstr);
-				depq.add(kstr);
+				depq.Add(kstr);
 				if (kstr.CompareTo(largest)>0) largest = kstr;
 
-				string result = depq.inspectMost();
+				string result = depq.InspectMost();
 				Assert.AreEqual(largest, result);
 
 			}
@@ -102,10 +102,10 @@ namespace TwitterBot
 					string kstr = randomString(5);
 
 					array.Add(kstr);
-					depq.add(kstr);
+					depq.Add(kstr);
 					if (kstr.CompareTo(largest)>0) largest = kstr;
 				} else {
-					string discarded = depq.getMost();
+					string discarded = depq.GetMost();
 					array.Remove(discarded);
 					largest = array[0];
 					for(int j=1; j<array.Count; j++) {
@@ -113,7 +113,7 @@ namespace TwitterBot
 					}
 				}
 
-				string result = (string)depq.inspectMost();
+				string result = (string)depq.InspectMost();
 				Assert.AreEqual(largest, result);
 			}
 		}
@@ -128,8 +128,8 @@ namespace TwitterBot
 			for (int i=0; i<1000; i++) {
 				string kstr = randomString(5);
 
-				depq.add(kstr);
-				Assert.AreEqual(i+1, depq.size());
+				depq.Add(kstr);
+				Assert.AreEqual(i+1, depq.Size());
 			}
 
 		}
@@ -150,9 +150,9 @@ namespace TwitterBot
 					if (array.Contains (kstr)) continue;
 
 					array.Add (kstr);
-					depq.add (kstr);
+					depq.Add (kstr);
 
-					Assert.AreEqual (i + 1, depq.size ());
+					Assert.AreEqual (i + 1, depq.Size ());
 
 					Assert.IsTrue (depq.Contains (kstr));
 
@@ -171,11 +171,11 @@ namespace TwitterBot
 			Console.WriteLine("getLeast");
 
 			for (int i=0; i<1000; i++) {
-				depq.add(randomString(5));
+				depq.Add(randomString(5));
 			}
 			for (int i=0; i<1000; i++) {
-				string expResult = (String)depq.inspectLeast();
-				string result = (String)depq.getLeast();
+				string expResult = (String)depq.InspectLeast();
+				string result = (String)depq.GetLeast();
 				Assert.AreEqual(expResult, result);
 			}
 		}
@@ -188,11 +188,11 @@ namespace TwitterBot
 			Console.WriteLine("getMost");
 
 			for (int i=0; i<1000; i++) {
-				depq.add(randomString(5));
+				depq.Add(randomString(5));
 			}
 			for (int i=0; i<1000; i++) {
-				string expResult = (String)depq.inspectMost();
-				string result = (String)depq.getMost();
+				string expResult = (String)depq.InspectMost();
+				string result = (String)depq.GetMost();
 				Assert.AreEqual(expResult, result);
 			}
 		}
@@ -205,20 +205,20 @@ namespace TwitterBot
 			Console.WriteLine("isEmpty");
 
 			bool expResult = true;
-			bool result = depq.isEmpty();
+			bool result = depq.IsEmpty();
 			Assert.AreEqual(expResult, result);
 
 			for (int i=0; i<10; i++) {
 				int count = r.Next(0, 1000);
 				for (int j=0; j<count; j++) {
-					depq.add(""+j);
-					Assert.AreEqual(false, depq.isEmpty());
+					depq.Add(""+j);
+					Assert.AreEqual(false, depq.IsEmpty());
 				}
 				for (int j=0; j<count; j++) {
-					Assert.AreEqual(false, depq.isEmpty());
-					depq.getLeast();
+					Assert.AreEqual(false, depq.IsEmpty());
+					depq.GetLeast();
 				}
-				Assert.AreEqual(true, depq.isEmpty());
+				Assert.AreEqual(true, depq.IsEmpty());
 			}
 		}
 
@@ -231,15 +231,15 @@ namespace TwitterBot
 
 			for (int i=0; i<1000; i++) {
 				int k = r.Next(0, 100);
-				depq.add(""+k);
-				Assert.AreEqual(i+1, depq.size());
+				depq.Add(""+k);
+				Assert.AreEqual(i+1, depq.Size());
 			}
 
 			for (int i=0; i<1000; i++) {
 				bool bigEnd = r.Next(0, 1)>0.5;
-				if (bigEnd) depq.getMost();
-				else depq.getLeast();
-				Assert.AreEqual(1000-i-1, depq.size());
+				if (bigEnd) depq.GetMost();
+				else depq.GetLeast();
+				Assert.AreEqual(1000-i-1, depq.Size());
 			}
 		}
 

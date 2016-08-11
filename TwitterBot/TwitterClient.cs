@@ -11,6 +11,7 @@ using System.Text.RegularExpressions;
 using TwitterAPI;
 using TwitterAPI.Dtos;
 using TwitterAPI.Exceptions;
+using System.Net;
 
 namespace TwitterBot
 {
@@ -31,9 +32,6 @@ namespace TwitterBot
 
 		private readonly object tweetQueueLock = new object ();
 		private DEPQ<Tweet> tweetQueue = new DEPQ<Tweet> ();
-
-		private long lockCount = 0;
-		private long getThreadCount = 0;
 
 		private Timer getTweetsTimer;
 
@@ -122,9 +120,11 @@ namespace TwitterBot
 							Logger.LogInfo ("Unfollowed {0}", user.ToString ());
 						}
 
-					} catch (Exception ex) {
+					} catch (WebException ex) {
+						Logger.LogError ("WebException: {1}", ex.Message);
+					}/* catch (Exception ex) {
 						Logger.LogError ("Error: " + ex.Message + ", Inner: " + ex.InnerException != null ? ex.InnerException.Message : "");
-					}
+					}*/
 				} else {
 
 					RedisValue user = db.ListLeftPop ("follow_requests");
@@ -152,6 +152,10 @@ namespace TwitterBot
 									}
 								}
 
+							} catch (WebException ex) {
+								Logger.LogError ("WebException: {1}", ex.Message);
+
+								db.ListRightPush ("follow_requests", user.ToString ());
 							} catch (Exception ex) {
 								Logger.LogError ("Error: " + ex.Message);
 
@@ -203,6 +207,10 @@ namespace TwitterBot
 							}
 						}
 
+					}catch (WebException ex) {
+						Logger.LogError ("WebException: {1}", ex.Message);
+
+						db.ListRightPush ("favourite_requests", tweetId.ToString ());
 					} catch (Exception ex) {
 						Logger.LogError ("Error: " + ex.Message);
 				
@@ -228,12 +236,10 @@ namespace TwitterBot
 
 				int size = 0;
 
-				Interlocked.Increment (ref lockCount);
 				lock (tweetQueueLock) {
-					tweet = tweetQueue.getMost ();
-					size = tweetQueue.size ();
+					tweet = tweetQueue.GetMost ();
+					size = tweetQueue.Size ();
 				}
-				Interlocked.Decrement (ref lockCount);
 					
 				if (tweet != null) {
 
@@ -243,7 +249,7 @@ namespace TwitterBot
 						file.WriteLine (tweet.Text.Replace ("\n", String.Empty).Replace ("\r", String.Empty));
 					}
 
-					//try {
+					try {
 
 						if (tweet.Follow)
 							db.ListRightPush ("follow_requests", tweet.UserId.ToString ());
@@ -256,10 +262,26 @@ namespace TwitterBot
 						});
 
 						Logger.LogInfo (
-							"Priority: {1}, Follow? {3}, Favourite?: {4}, QueueSize: {5}, URL: https://twitter.com/{2}/status/{0}, LC: {6}", 
-							tweet.Id, tweet.Priority, tweet.UserName, tweet.Follow, tweet.Favourite, size, Interlocked.Read (ref lockCount));
+							"Priority: {1}, Follow? {3}, Favourite?: {4}, QueueSize: {5}, URL: https://twitter.com/{2}/status/{0}", 
+							tweet.Id, tweet.Priority, tweet.UserName, tweet.Follow, tweet.Favourite, size);
 
-					/*} catch (Exception ex) {
+					} catch (ApiException ex) {
+
+						foreach (var error in ex.ErrorResponse.Errors) {
+							//Blocked
+							if (error.Code == 136) {
+								Logger.LogInfo ("Blocked from retweeting by user: {1}", tweet.UserName);
+							} else {
+								Logger.LogError ("Api Error: {1}", error.ToString ());
+
+								//throw back out
+								throw ex;
+							}
+						}
+
+					}catch (WebException ex) {
+						Logger.LogError ("WebException: {1}", ex.Message);
+					}/*catch (Exception ex) {
 						Logger.LogError ("Error: " + ex.Message);
 						//Console.WriteLine ("Error: " + ex.Message + ", Inner: " + ex.InnerException != null ? ex.InnerException.Message : "");
 					}*/
@@ -276,8 +298,6 @@ namespace TwitterBot
 		{
 
 			//Console.WriteLine ("Get thread count: {0}", Interlocked.Read(ref getThreadCount));
-
-			Interlocked.Increment (ref getThreadCount);
 
 			try {
 
@@ -331,8 +351,7 @@ namespace TwitterBot
 							//Console.WriteLine("Already have tweet: " + tweetData.Id);
 							continue;
 						}
-
-						Interlocked.Increment (ref lockCount);
+							
 						lock (tweetQueueLock) {
 
 							if (blockList.Any (i => i.Equals (tweetData.UserId))) {
@@ -341,13 +360,12 @@ namespace TwitterBot
 							} else {
 
 								if (!tweetQueue.Contains (tweetData))
-									tweetQueue.add (tweetData);
-								if (tweetQueue.size () > 100)
-									tweetQueue.getLeast ();
+									tweetQueue.Add (tweetData);
+								if (tweetQueue.Size () > 100)
+									tweetQueue.GetLeast ();
 
 							}
 						}
-						Interlocked.Decrement (ref lockCount);
 
 					}
 				}
@@ -356,6 +374,8 @@ namespace TwitterBot
 
 				Logger.LogError ("Redis operation timed out: {0}", ex.Message);
 
+			} catch (WebException ex) {
+				Logger.LogError ("WebException: {1}", ex.Message);
 			} catch (ApiException ex) {
 
 				foreach (var error in ex.ErrorResponse.Errors) {
@@ -364,7 +384,7 @@ namespace TwitterBot
 						Logger.LogInfo ("Rate limit exceeded for GetTweets - tailing back");
 						getTweetsTimer.Change (15, 5);
 					} else {
-						Logger.LogError ("Api Error - " + error.ToString ());
+						Logger.LogError ("Api Error: {1}", error.ToString ());
 
 						//throw back out
 						throw ex;
@@ -374,8 +394,6 @@ namespace TwitterBot
 			} /*catch (Exception ex) {
 				Logger.LogError ("Error: " + ex.Message + " ExType: " + ex.GetType ().ToString ());
 			}*/
-
-			Interlocked.Decrement (ref getThreadCount);
 		}
 	}
 }
