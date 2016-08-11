@@ -3,12 +3,12 @@ using System.Collections.Generic;
 using StackExchange.Redis;
 using Newtonsoft.Json;
 
-namespace TwitterBot
+namespace TwitterBot.Containers
 {
 	public class RedisList<T> : IList<T>
 	{
 		private ConnectionMultiplexer redis;
-		private string key;
+		protected string key;
 
 		public RedisList (ConnectionMultiplexer redis, string key)
 		{
@@ -16,19 +16,27 @@ namespace TwitterBot
 			this.redis = redis;
 		}
 
-		private IDatabase GetRedisDb ()
+		protected IDatabase GetRedisDb ()
 		{
 			return redis.GetDatabase ();
 		}
 
-		private string Serialise (object obj)
+		protected string Serialise (object obj)
 		{
-			return JsonConvert.SerializeObject (obj);
+			var t = typeof (T);
+			if (t.IsPrimitive || t.IsValueType || (t == typeof(string)))
+				return obj.ToString();
+			else
+				return JsonConvert.SerializeObject (obj);
 		}
 
-		private T Deserialise (string serialized)
+		protected T Deserialise (string serialised)
 		{
-			return JsonConvert.DeserializeObject<T> (serialized);
+			var t = typeof (T);
+			if (t.IsPrimitive || t.IsValueType || (t == typeof(string)))
+				return serialised != null ? (T)Convert.ChangeType(serialised, t) : default(T);
+			else
+				return JsonConvert.DeserializeObject<T> (serialised);
 		}
 
 		public void Insert (int index, T item)

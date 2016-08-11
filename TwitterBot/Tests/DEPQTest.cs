@@ -2,7 +2,9 @@
 using System;
 using System.Collections.Generic;
 
-namespace TwitterBot
+using TwitterBot.Containers;
+
+namespace TwitterBot.Tests
 {
 	[TestFixture ()]
 	public class DEPQTest

@@ -2,7 +2,7 @@
 using System.Linq;
 using System.Collections.Generic;
 
-namespace TwitterBot
+namespace TwitterBot.Containers
 {
 	public class DEPQ<T> where T : IComparable<T>
 	{

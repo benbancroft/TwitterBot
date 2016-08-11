@@ -49,12 +49,13 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="TwitterClient.cs" />
     <Compile Include="TweetPriority.cs" />
-    <Compile Include="DEPQ.cs" />
     <Compile Include="Tweet.cs" />
     <Compile Include="Tests\DEPQTweetTest.cs" />
     <Compile Include="Tests\DEPQTest.cs" />
-    <Compile Include="RedisList.cs" />
     <Compile Include="Logger.cs" />
+    <Compile Include="Containers\DEPQ.cs" />
+    <Compile Include="Containers\RedisList.cs" />
+    <Compile Include="Containers\RedisQueue.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
   <ItemGroup>
@@ -63,6 +64,7 @@
   </ItemGroup>
   <ItemGroup>
     <Folder Include="Tests\" />
+    <Folder Include="Containers\" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\TwitterAPI\TwitterAPI.csproj">

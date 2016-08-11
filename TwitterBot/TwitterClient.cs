@@ -7,11 +7,13 @@ using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Text.RegularExpressions;
+using System.Net;
 
 using TwitterAPI;
 using TwitterAPI.Dtos;
 using TwitterAPI.Exceptions;
-using System.Net;
+
+using TwitterBot.Containers;
 
 namespace TwitterBot
 {
@@ -22,13 +24,17 @@ namespace TwitterBot
 		private ConnectionMultiplexer redis;
 		private IDatabase db;
 
-		private RedisList<String> followRegexs;
-		private RedisList<String> favouriteRegexs;
-		private RedisList<String> blockRegexs;
-		private RedisList<String> blockList;
+		private RedisList<string> followRegexs;
+		private RedisList<string> favouriteRegexs;
+		private RedisList<string> blockRegexs;
+		private RedisList<string> blockList;
+
+		private RedisQueue<string> followQueue;
+		private RedisQueue<ulong> favouriteQueue;
+
 
 		private int searchIndex = 0;
-		private RedisList<String> searchKeyWords;
+		private RedisList<string> searchKeyWords;
 
 		private readonly object tweetQueueLock = new object ();
 		private DEPQ<Tweet> tweetQueue = new DEPQ<Tweet> ();
@@ -47,21 +53,24 @@ namespace TwitterBot
 
 			redis = ConnectionMultiplexer.Connect (ConfigurationManager.AppSettings ["localRedis"]);
 
-			this.followRegexs = new RedisList<String> (redis, "FollowRegexs");
+			this.followRegexs = new RedisList<string> (redis, "follow_regexs");
 			if (this.followRegexs.Count <= 0)
-				this.followRegexs.AddRange (new List<String> () { "follow ", "follower ", " follow&" });
-			this.favouriteRegexs = new RedisList<String> (redis, "FavouriteRegexs");
+				this.followRegexs.AddRange (new List<string> () { "follow ", "follower ", " follow&" });
+			this.favouriteRegexs = new RedisList<string> (redis, "favourite_regexs");
 			if (this.favouriteRegexs.Count <= 0)
-				this.favouriteRegexs.AddRange (new List<String> () { " fav ", " favorite ", " like ", " favourite " });
-			this.blockRegexs = new RedisList<String> (redis, "BlockRegexs");
+				this.favouriteRegexs.AddRange (new List<string> () { " fav ", " favorite ", " like ", " favourite " });
+			this.blockRegexs = new RedisList<string> (redis, "block_regexs");
 			if (this.blockRegexs.Count <= 0)
-				this.blockRegexs.AddRange (new List<String> () { "^((?!(retweet)|(rt )|( rt)|(#rt)|(re-tweet)).)*$" });
-			this.blockList = new RedisList<String> (redis, "BlockList");
+				this.blockRegexs.AddRange (new List<string> () { "^((?!(retweet)|(rt )|( rt)|(#rt)|(re-tweet)).)*$" });
+			this.blockList = new RedisList<string> (redis, "block_list");
 			if (this.blockList.Count <= 0)
-				this.blockList.AddRange (new List<String> () { });
-			this.searchKeyWords = new RedisList<String> (redis, "SearchKeywords");
+				this.blockList.AddRange (new List<string> () { });
+			this.searchKeyWords = new RedisList<string> (redis, "search_keywords");
 			if (this.searchKeyWords.Count <= 0)
-				this.searchKeyWords.AddRange (new List<String> () { "RT to win", "Retweet and win", "retweet to win" });
+				this.searchKeyWords.AddRange (new List<string> () { "RT to win", "Retweet and win", "retweet to win" });
+
+			followQueue = new RedisQueue<string> (redis, "follow_requests");
+			favouriteQueue = new RedisQueue<ulong> (redis, "favourite_requests");
 
 			db = redis.GetDatabase ();
 
@@ -121,19 +130,19 @@ namespace TwitterBot
 						}
 
 					} catch (WebException ex) {
-						Logger.LogError ("WebException: {1}", ex.Message);
+						Logger.LogError ("WebException: {0}", ex.Message);
 					}/* catch (Exception ex) {
 						Logger.LogError ("Error: " + ex.Message + ", Inner: " + ex.InnerException != null ? ex.InnerException.Message : "");
 					}*/
 				} else {
+					
+					var user = followQueue.Pop();
 
-					RedisValue user = db.ListLeftPop ("follow_requests");
-
-					if (user.HasValue) {
+					if (user != null){
 						if (!db.SortedSetRank ("following", user).HasValue) {
 							try {
 								twitterCtx.request (new FollowRequest {
-									UserId = user.ToString (),
+									UserId = user,
 									Follow = true
 								});
 
@@ -148,18 +157,18 @@ namespace TwitterBot
 
 									//Blocked by user
 									if (error.Code != 162) {
-										db.ListRightPush ("follow_requests", user.ToString ());
+										followQueue.Push(user);
 									}
 								}
 
 							} catch (WebException ex) {
-								Logger.LogError ("WebException: {1}", ex.Message);
+								Logger.LogError ("WebException: {0}", ex.Message);
 
-								db.ListRightPush ("follow_requests", user.ToString ());
+								followQueue.Push(user);
 							} catch (Exception ex) {
 								Logger.LogError ("Error: " + ex.Message);
 
-								db.ListRightPush ("follow_requests", user.ToString ());
+								followQueue.Push(user);
 
 								throw ex;
 							}
@@ -182,12 +191,11 @@ namespace TwitterBot
 
 			try {
 
-				RedisValue tweetId = db.ListLeftPop ("favourite_requests");
-
-				if (tweetId.HasValue) {
+				var tweetId = favouriteQueue.Pop();
+				if (tweetId != 0){
 					try {
 						twitterCtx.request (new FavouriteRequest {
-							Id = ulong.Parse (tweetId.ToString ())
+							Id = tweetId
 						});
 
 						db.SetAdd ("favourited", tweetId.ToString ());
@@ -203,23 +211,22 @@ namespace TwitterBot
 							if (error.Code == 139 || error.Code == 136) {
 								db.SetAdd ("favourited", tweetId.ToString ());
 							} else {
-								db.ListRightPush ("favourite_requests", tweetId.ToString ());
+								favouriteQueue.Push(tweetId);
 							}
 						}
 
-					}catch (WebException ex) {
-						Logger.LogError ("WebException: {1}", ex.Message);
+					} catch (WebException ex) {
+						Logger.LogError ("WebException: {0}", ex.Message);
 
-						db.ListRightPush ("favourite_requests", tweetId.ToString ());
+						favouriteQueue.Push(tweetId);
 					} catch (Exception ex) {
 						Logger.LogError ("Error: " + ex.Message);
 				
-						db.ListRightPush ("favourite_requests", tweetId.ToString ());
+						favouriteQueue.Push(tweetId);
 
 						throw ex;
 					}
 				}
-
 			} catch (TimeoutException ex) {
 
 				Logger.LogError ("Redis operation timed out: {0}", ex.Message);
@@ -246,16 +253,16 @@ namespace TwitterBot
 					db.SetAdd ("tweets", tweet.Id.ToString ());
 
 					using (System.IO.StreamWriter file = new System.IO.StreamWriter (@"tweets.txt", true)) {
-						file.WriteLine (tweet.Text.Replace ("\n", String.Empty).Replace ("\r", String.Empty));
+						file.WriteLine (tweet.Text.Replace ("\n", string.Empty).Replace ("\r", string.Empty));
 					}
 
 					try {
 
 						if (tweet.Follow)
-							db.ListRightPush ("follow_requests", tweet.UserId.ToString ());
+							followQueue.Push(tweet.UserId.ToString ());
 
 						if (tweet.Favourite)
-							db.ListRightPush ("favourite_requests", tweet.Id.ToString ());
+							favouriteQueue.Push(tweet.Id);
 
 						twitterCtx.request (new RetweetRequest {
 							Id = tweet.Id
@@ -270,9 +277,9 @@ namespace TwitterBot
 						foreach (var error in ex.ErrorResponse.Errors) {
 							//Blocked
 							if (error.Code == 136) {
-								Logger.LogInfo ("Blocked from retweeting by user: {1}", tweet.UserName);
+								Logger.LogInfo ("Blocked from retweeting by user: {0}", tweet.UserName);
 							} else {
-								Logger.LogError ("Api Error: {1}", error.ToString ());
+								Logger.LogError ("Api Error: {0}", error.ToString ());
 
 								//throw back out
 								throw ex;
@@ -280,7 +287,7 @@ namespace TwitterBot
 						}
 
 					}catch (WebException ex) {
-						Logger.LogError ("WebException: {1}", ex.Message);
+						Logger.LogError ("WebException: {0}", ex.Message);
 					}/*catch (Exception ex) {
 						Logger.LogError ("Error: " + ex.Message);
 						//Console.WriteLine ("Error: " + ex.Message + ", Inner: " + ex.InnerException != null ? ex.InnerException.Message : "");
@@ -296,8 +303,6 @@ namespace TwitterBot
 
 		public void GetTweets ()
 		{
-
-			//Console.WriteLine ("Get thread count: {0}", Interlocked.Read(ref getThreadCount));
 
 			try {
 
@@ -375,16 +380,16 @@ namespace TwitterBot
 				Logger.LogError ("Redis operation timed out: {0}", ex.Message);
 
 			} catch (WebException ex) {
-				Logger.LogError ("WebException: {1}", ex.Message);
+				Logger.LogError ("WebException: {0}", ex.Message);
 			} catch (ApiException ex) {
 
 				foreach (var error in ex.ErrorResponse.Errors) {
 					//Rate limit
 					if (error.Code == 88) {
 						Logger.LogInfo ("Rate limit exceeded for GetTweets - tailing back");
-						getTweetsTimer.Change (15, 5);
+						getTweetsTimer.Change (TimeSpan.FromSeconds (15), TimeSpan.FromSeconds (5));
 					} else {
-						Logger.LogError ("Api Error: {1}", error.ToString ());
+						Logger.LogError ("Api Error: {0}", error.ToString ());
 
 						//throw back out
 						throw ex;

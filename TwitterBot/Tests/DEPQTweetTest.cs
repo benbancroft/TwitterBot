@@ -1,7 +1,9 @@
 ﻿using NUnit.Framework;
 using System;
 
-namespace TwitterBot
+using TwitterBot.Containers;
+
+namespace TwitterBot.Tests
 {
 	[TestFixture ()]
 	public class DEPQTweetTest
