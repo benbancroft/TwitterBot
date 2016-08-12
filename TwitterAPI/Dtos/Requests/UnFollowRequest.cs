@@ -10,7 +10,7 @@ namespace TwitterAPI.Dtos
 		public string ScreenName { get; set; }
 
 		[Parameter("user_id", false)]
-		public string UserId { get; set; }
+		public ulong UserId { get; set; }
 	}
 }
 

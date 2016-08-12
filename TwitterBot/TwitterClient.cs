@@ -21,17 +21,20 @@ namespace TwitterBot
 	{
 		private TwitterApiClient twitterCtx;
 
-		private ConnectionMultiplexer redis;
-		private IDatabase db;
+		private ConnectionMultiplexer localRedis;
+		//private ConnectionMultiplexer remoteRedis;
 
 		private RedisList<string> followRegexs;
 		private RedisList<string> favouriteRegexs;
 		private RedisList<string> blockRegexs;
 		private RedisList<string> blockList;
 
-		private RedisQueue<string> followQueue;
+		private RedisQueue<ulong> followQueue;
 		private RedisQueue<ulong> favouriteQueue;
-
+		private RedisSet<ulong> tweetedSet;
+		private RedisSet<ulong> favouritedSet;
+		private RedisSet<ulong> blockedBySet;
+		private RedisSortedSet<ulong> followingSet;
 
 		private int searchIndex = 0;
 		private RedisList<string> searchKeyWords;
@@ -51,29 +54,31 @@ namespace TwitterBot
 				AccessTokenSecret = ConfigurationManager.AppSettings ["accessTokenSecret"]
 			});
 
-			redis = ConnectionMultiplexer.Connect (ConfigurationManager.AppSettings ["localRedis"]);
+			localRedis = ConnectionMultiplexer.Connect (ConfigurationManager.AppSettings ["localRedis"]);
+			//remoteRedis = ConnectionMultiplexer.Connect (ConfigurationManager.AppSettings ["remoteRedis"]);
 
-			this.followRegexs = new RedisList<string> (redis, "follow_regexs");
+			this.followRegexs = new RedisList<string> (localRedis, "follow_regexs");
 			if (this.followRegexs.Count <= 0)
 				this.followRegexs.AddRange (new List<string> () { "follow ", "follower ", " follow&" });
-			this.favouriteRegexs = new RedisList<string> (redis, "favourite_regexs");
+			this.favouriteRegexs = new RedisList<string> (localRedis, "favourite_regexs");
 			if (this.favouriteRegexs.Count <= 0)
 				this.favouriteRegexs.AddRange (new List<string> () { " fav ", " favorite ", " like ", " favourite " });
-			this.blockRegexs = new RedisList<string> (redis, "block_regexs");
+			this.blockRegexs = new RedisList<string> (localRedis, "block_regexs");
 			if (this.blockRegexs.Count <= 0)
 				this.blockRegexs.AddRange (new List<string> () { "^((?!(retweet)|(rt )|( rt)|(#rt)|(re-tweet)).)*$" });
-			this.blockList = new RedisList<string> (redis, "block_list");
+			this.blockList = new RedisList<string> (localRedis, "block_list");
 			if (this.blockList.Count <= 0)
 				this.blockList.AddRange (new List<string> () { });
-			this.searchKeyWords = new RedisList<string> (redis, "search_keywords");
+			this.searchKeyWords = new RedisList<string> (localRedis, "search_keywords");
 			if (this.searchKeyWords.Count <= 0)
 				this.searchKeyWords.AddRange (new List<string> () { "RT to win", "Retweet and win", "retweet to win" });
 
-			followQueue = new RedisQueue<string> (redis, "follow_requests");
-			favouriteQueue = new RedisQueue<ulong> (redis, "favourite_requests");
-
-			db = redis.GetDatabase ();
-
+			followQueue = new RedisQueue<ulong> (localRedis, "follow_requests");
+			favouriteQueue = new RedisQueue<ulong> (localRedis, "favourite_requests");
+			tweetedSet = new RedisSet<ulong> (localRedis, "tweets");
+			favouritedSet = new RedisSet<ulong> (localRedis, "favourited");
+			followingSet = new RedisSortedSet<ulong> (localRedis, "following");
+			blockedBySet = new RedisSet<ulong> (localRedis, "blocked_by");
 
 			//start timers
 
@@ -107,24 +112,27 @@ namespace TwitterBot
 
 		}
 
+		public void AddBlockedBy(ulong user) {
+			followingSet.Remove (user);
+			blockedBySet.Add(user);
+		}
+
 		public void followUsers ()
 		{
 
 			try {
 
-				if (db.SortedSetLength ("following") >= 4500) {
+				if (followingSet.Count >= 4500) {
 					try {
+						
+						var user = followingSet.GetLeast();
 
-						var userRange = db.SortedSetRangeByScore ("following", double.NegativeInfinity, double.PositiveInfinity, Exclude.None, Order.Ascending, 0, 1);
-
-						var user = userRange.First ();
-
-						if (user.HasValue) {
+						if (user != 0) {
 							twitterCtx.request (new UnFollowRequest {
-								UserId = user.ToString ()
+								UserId = user
 							});
 
-							db.SortedSetRemove ("following", user.ToString ());
+							followingSet.Remove(user);
 
 							Logger.LogInfo ("Unfollowed {0}", user.ToString ());
 						}
@@ -136,18 +144,18 @@ namespace TwitterBot
 					}*/
 				} else {
 					
-					var user = followQueue.Pop();
+					var user = followQueue.Pop ();
 
-					if (user != null){
-						if (!db.SortedSetRank ("following", user).HasValue) {
+					if (user != 0) {
+						if (!followingSet.Contains(user)) {
 							try {
 								twitterCtx.request (new FollowRequest {
 									UserId = user,
 									Follow = true
 								});
 
-								db.SortedSetAdd ("following", user.ToString (), (int)(DateTime.UtcNow.Subtract (new DateTime (1970, 1, 1))).TotalSeconds);
-								Logger.LogInfo ("Followed {0}", user.ToString ());
+								followingSet.Add(user, (int)(DateTime.UtcNow.Subtract (new DateTime (1970, 1, 1))).TotalSeconds);
+								Logger.LogInfo ("Followed {0}", user);
 
 
 							} catch (ApiException ex) {
@@ -156,24 +164,30 @@ namespace TwitterBot
 									Logger.LogInfo ("Api Error - " + error.ToString ());
 
 									//Blocked by user
-									if (error.Code != 162) {
-										followQueue.Push(user);
+									if (error.Code == 162) {
+										AddBlockedBy (user);
+										Logger.LogError ("Blocked from following by user: {0}", user);
+									}else{
+										Logger.LogError ("Api Error: {0}", error.ToString ());
+
+										//throw back out
+										throw ex;
 									}
 								}
 
 							} catch (WebException ex) {
 								Logger.LogError ("WebException: {0}", ex.Message);
 
-								followQueue.Push(user);
+								followQueue.Push (user);
 							} catch (Exception ex) {
 								Logger.LogError ("Error: " + ex.Message);
 
-								followQueue.Push(user);
+								followQueue.Push (user);
 
 								throw ex;
 							}
 						} else {
-							db.SortedSetAdd ("following", user.ToString (), (int)(DateTime.UtcNow.Subtract (new DateTime (1970, 1, 1))).TotalSeconds);
+							followingSet.Add(user, (int)(DateTime.UtcNow.Subtract (new DateTime (1970, 1, 1))).TotalSeconds);
 							Logger.LogInfo ("Already followed {0}", user.ToString ());
 						}
 					}
@@ -191,14 +205,14 @@ namespace TwitterBot
 
 			try {
 
-				var tweetId = favouriteQueue.Pop();
-				if (tweetId != 0){
+				var tweetId = favouriteQueue.Pop ();
+				if (tweetId != 0) {
 					try {
 						twitterCtx.request (new FavouriteRequest {
 							Id = tweetId
 						});
-
-						db.SetAdd ("favourited", tweetId.ToString ());
+								
+						favouritedSet.Add(tweetId);
 						Logger.LogInfo ("Favourited {0}", tweetId.ToString ());
 
 
@@ -209,20 +223,26 @@ namespace TwitterBot
 
 							//Already favourited
 							if (error.Code == 139 || error.Code == 136) {
-								db.SetAdd ("favourited", tweetId.ToString ());
+								favouritedSet.Add(tweetId);
+								Logger.LogError ("Already favourited: {0}", tweetId);
 							} else {
-								favouriteQueue.Push(tweetId);
+								favouriteQueue.Push (tweetId);
+
+								Logger.LogError ("Api Error: {0}", error.ToString ());
+
+								//throw back out
+								throw ex;
 							}
 						}
 
 					} catch (WebException ex) {
 						Logger.LogError ("WebException: {0}", ex.Message);
 
-						favouriteQueue.Push(tweetId);
+						favouriteQueue.Push (tweetId);
 					} catch (Exception ex) {
 						Logger.LogError ("Error: " + ex.Message);
 				
-						favouriteQueue.Push(tweetId);
+						favouriteQueue.Push (tweetId);
 
 						throw ex;
 					}
@@ -250,7 +270,7 @@ namespace TwitterBot
 					
 				if (tweet != null) {
 
-					db.SetAdd ("tweets", tweet.Id.ToString ());
+					tweetedSet.Add(tweet.Id);
 
 					using (System.IO.StreamWriter file = new System.IO.StreamWriter (@"tweets.txt", true)) {
 						file.WriteLine (tweet.Text.Replace ("\n", string.Empty).Replace ("\r", string.Empty));
@@ -259,10 +279,10 @@ namespace TwitterBot
 					try {
 
 						if (tweet.Follow)
-							followQueue.Push(tweet.UserId.ToString ());
+							followQueue.Push (tweet.UserId);
 
 						if (tweet.Favourite)
-							favouriteQueue.Push(tweet.Id);
+							favouriteQueue.Push (tweet.Id);
 
 						twitterCtx.request (new RetweetRequest {
 							Id = tweet.Id
@@ -276,9 +296,15 @@ namespace TwitterBot
 
 						foreach (var error in ex.ErrorResponse.Errors) {
 							//Blocked
-							if (error.Code == 136) {
-								Logger.LogInfo ("Blocked from retweeting by user: {0}", tweet.UserName);
-							} else {
+							switch (error.Code) {
+							case 136:
+								AddBlockedBy(tweet.UserId);
+								Logger.LogError ("Blocked from retweeting by user: {0}", tweet.UserId);
+								break;
+							case 144:
+								Logger.LogError ("Tweet doesn't exist anymore: {0}", tweet.Id);
+								break;
+							default:
 								Logger.LogError ("Api Error: {0}", error.ToString ());
 
 								//throw back out
@@ -286,7 +312,7 @@ namespace TwitterBot
 							}
 						}
 
-					}catch (WebException ex) {
+					} catch (WebException ex) {
 						Logger.LogError ("WebException: {0}", ex.Message);
 					}/*catch (Exception ex) {
 						Logger.LogError ("Error: " + ex.Message);
@@ -317,8 +343,6 @@ namespace TwitterBot
 				var searchResponse = twitterCtx.request (new SearchTweetsRequest {
 					Query = keyword
 				});
-
-				//var tweets = db.SetScan ("tweets").ToArray();
 
 				if (searchResponse != null && searchResponse.Statuses != null) {
 					foreach (var topTweet in searchResponse.Statuses) {
@@ -352,7 +376,8 @@ namespace TwitterBot
 						tweetData.Follow = followRegexs.Any (i => Regex.Matches (tweet.Text.ToLower (), i.ToLower ()).Count > 0);
 						tweetData.Favourite = favouriteRegexs.Any (i => Regex.Matches (tweet.Text.ToLower (), i.ToLower ()).Count > 0);
 
-						if (db.SetContains ("tweets", tweetData.Id.ToString ())) {
+						//TODO - in future when syncing, try sending to remote even if blocked locally
+						if (blockedBySet.Contains(tweetData.UserId) || tweetedSet.Contains(tweetData.Id)) {
 							//Console.WriteLine("Already have tweet: " + tweetData.Id);
 							continue;
 						}

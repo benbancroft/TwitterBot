@@ -19,7 +19,7 @@ namespace TwitterBot.Containers
 		{
 			var value = GetRedisDb ().ListLeftPop (key);
 			if (value.HasValue)
-				return Deserialise (value.ToString ());
+				return ContainerUtils<T>.Deserialise (value.ToString ());
 			else
 				return default(T);
 		}

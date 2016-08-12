@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using StackExchange.Redis;
-using Newtonsoft.Json;
 
 namespace TwitterBot.Containers
 {
@@ -21,29 +20,11 @@ namespace TwitterBot.Containers
 			return redis.GetDatabase ();
 		}
 
-		protected string Serialise (object obj)
-		{
-			var t = typeof (T);
-			if (t.IsPrimitive || t.IsValueType || (t == typeof(string)))
-				return obj.ToString();
-			else
-				return JsonConvert.SerializeObject (obj);
-		}
-
-		protected T Deserialise (string serialised)
-		{
-			var t = typeof (T);
-			if (t.IsPrimitive || t.IsValueType || (t == typeof(string)))
-				return serialised != null ? (T)Convert.ChangeType(serialised, t) : default(T);
-			else
-				return JsonConvert.DeserializeObject<T> (serialised);
-		}
-
 		public void Insert (int index, T item)
 		{
 			var db = GetRedisDb ();
 			var before = db.ListGetByIndex (key, index);
-			db.ListInsertBefore (key, before, Serialise (item));
+			db.ListInsertBefore (key, before, ContainerUtils<T>.Serialise (item));
 		}
 
 		public void RemoveAt (int index)
@@ -58,7 +39,7 @@ namespace TwitterBot.Containers
 		public T this [int index] {
 			get {
 				var value = GetRedisDb ().ListGetByIndex (key, index);
-				return Deserialise (value.ToString ());
+				return ContainerUtils<T>.Deserialise (value.ToString ());
 			}
 			set {
 				Insert (index, value);
@@ -67,7 +48,7 @@ namespace TwitterBot.Containers
 
 		public void Add (T item)
 		{
-			GetRedisDb ().ListRightPush (key, Serialise (item));
+			GetRedisDb ().ListRightPush (key, ContainerUtils<T>.Serialise (item));
 		}
 
 		public void AddRange (IList<T> items)
@@ -84,7 +65,7 @@ namespace TwitterBot.Containers
 		public bool Contains (T item)
 		{
 			for (int i = 0; i < Count; i++) {
-				if (GetRedisDb ().ListGetByIndex (key, i).ToString ().Equals (Serialise (item))) {
+				if (GetRedisDb ().ListGetByIndex (key, i).ToString ().Equals (ContainerUtils<T>.Serialise (item))) {
 					return true;
 				}
 			}
@@ -99,7 +80,7 @@ namespace TwitterBot.Containers
 		public int IndexOf (T item)
 		{
 			for (int i = 0; i < Count; i++) {
-				if (GetRedisDb ().ListGetByIndex (key, i).ToString ().Equals (Serialise (item))) {
+				if (GetRedisDb ().ListGetByIndex (key, i).ToString ().Equals (ContainerUtils<T>.Serialise (item))) {
 					return i;
 				}
 			}
@@ -116,20 +97,20 @@ namespace TwitterBot.Containers
 
 		public bool Remove (T item)
 		{
-			return GetRedisDb ().ListRemove (key, Serialise (item)) > 0;
+			return GetRedisDb ().ListRemove (key, ContainerUtils<T>.Serialise (item)) > 0;
 		}
 
 		public IEnumerator<T> GetEnumerator ()
 		{
 			for (int i = 0; i < this.Count; i++) {
-				yield return Deserialise (GetRedisDb ().ListGetByIndex (key, i).ToString ());
+				yield return ContainerUtils<T>.Deserialise (GetRedisDb ().ListGetByIndex (key, i).ToString ());
 			}
 		}
 
 		System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator ()
 		{
 			for (int i = 0; i < this.Count; i++) {
-				yield return Deserialise (GetRedisDb ().ListGetByIndex (key, i).ToString ());
+				yield return ContainerUtils<T>.Deserialise (GetRedisDb ().ListGetByIndex (key, i).ToString ());
 			}
 		}
 	}
